@@ -227,15 +227,17 @@
     max-width:100%; max-height:100%; border-radius:10px;
     box-shadow:0 12px 40px rgba(0,0,0,0.5);
   }
-  .task-remove{
+  .task-edit, .task-remove{
     flex:none;
     background:none; border:none;
     color:var(--text-dim);
-    font-size:16px;
+    font-size:14px;
     line-height:1;
     padding:2px 4px;
     cursor:pointer;
   }
+  .task-remove{ font-size:16px; }
+  .task-edit:hover{ color:var(--accent); }
   .task-remove:hover{ color:var(--pending); }
 
   .settings-toggle{
@@ -283,6 +285,7 @@ let saving = false;
 let calView = null;
 let selectedDate = todayStr();
 let pendingImageDataUrl = null;
+let editingTaskId = null;
 
 const MONTHS_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const DOW_PT = ['D','S','T','Q','Q','S','S'];
@@ -313,6 +316,14 @@ function pctColorClass(pct){
   if(pct >= 80) return 'good';
   if(pct >= 40) return 'mid';
   return 'pend';
+}
+
+function pctOptionsHtml(selectedPct){
+  const opts = [['', '—'], ['20','20%'], ['40','40%'], ['60','60%'], ['80','80%'], ['100','100%']];
+  return opts.map(([val, label]) => {
+    const isSelected = selectedPct != null && String(selectedPct) === val;
+    return `<option value="${val}" ${isSelected ? 'selected' : ''}>${label}</option>`;
+  }).join('');
 }
 
 function resizeImageFile(file, maxDim){
@@ -515,9 +526,12 @@ function renderDashboard(app){
               ` : ''}
             </div>
             ${t.image ? `<img class="task-thumb" src="${t.image}" alt="Anexo do item">` : ''}
+            <button class="task-edit" data-edit="${t.id}" aria-label="Editar">✎</button>
             <button class="task-remove" data-remove="${t.id}" aria-label="Remover">×</button>
           </div>
         `).join('')}</div>`;
+
+  const editingTask = editingTaskId ? tasks.find(x => x.id === editingTaskId) : null;
 
   app.innerHTML = `
     <div class="badge-adm">Admin</div>
@@ -555,37 +569,33 @@ function renderDashboard(app){
     </div>
 
     <div class="card">
-      <div class="section-title">Adicionar item</div>
+      <div class="section-title">${editingTask ? 'Editar item' : 'Adicionar item'}</div>
       <form id="taskForm">
         <div class="field">
           <label for="taskDate">Dia</label>
-          <input type="date" id="taskDate" value="${selectedDate || todayStr()}" />
+          <input type="date" id="taskDate" value="${editingTask ? editingTask.date : (selectedDate || todayStr())}" />
         </div>
         <div class="field">
           <label for="taskDesc">O que foi (ou será) proposto para esse dia</label>
-          <input type="text" id="taskDesc" placeholder="Ex: Revisar capítulo 3 - Redes" required />
+          <input type="text" id="taskDesc" placeholder="Ex: Revisar capítulo 3 - Redes" value="${editingTask ? escapeHtml(editingTask.description) : ''}" required />
         </div>
         <div class="field">
           <label for="taskHours">Horas estudadas (opcional)</label>
-          <input type="number" id="taskHours" min="0" step="0.5" placeholder="Ex: 2" />
+          <input type="number" id="taskHours" min="0" step="0.5" placeholder="Ex: 2" value="${editingTask && editingTask.hours != null ? editingTask.hours : ''}" />
         </div>
         <div class="field">
           <label for="taskPct">Aproveitamento (opcional)</label>
-          <select id="taskPct">
-            <option value="">—</option>
-            <option value="20">20%</option>
-            <option value="40">40%</option>
-            <option value="60">60%</option>
-            <option value="80">80%</option>
-            <option value="100">100%</option>
-          </select>
+          <select id="taskPct">${pctOptionsHtml(editingTask ? editingTask.pct : null)}</select>
         </div>
         <div class="field">
           <label for="taskImage">Anexar imagem (PNG, opcional)</label>
           <input type="file" id="taskImage" accept="image/png" />
           <div id="imagePreviewWrap"></div>
         </div>
-        <button type="submit">Adicionar</button>
+        <div style="display:flex; gap:8px;">
+          <button type="submit">${editingTask ? 'Salvar alterações' : 'Adicionar'}</button>
+          ${editingTask ? `<button type="button" class="ghost" id="cancelTaskEdit">Cancelar</button>` : ''}
+        </div>
       </form>
     </div>
 
@@ -628,6 +638,14 @@ function renderDashboard(app){
     updateImagePreview();
   });
 
+  if(editingTask){
+    document.getElementById('cancelTaskEdit').onclick = () => {
+      editingTaskId = null;
+      pendingImageDataUrl = null;
+      render();
+    };
+  }
+
   document.getElementById('taskForm').onsubmit = async (e) => {
     e.preventDefault();
     const date = document.getElementById('taskDate').value || todayStr();
@@ -636,19 +654,43 @@ function renderDashboard(app){
     const hoursRaw = document.getElementById('taskHours').value;
     const pctRaw = document.getElementById('taskPct').value;
     const newTasks = clone(tasks);
-    newTasks.push({
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
-      date,
-      description,
-      done: false,
-      hours: hoursRaw ? Number(hoursRaw) : null,
-      pct: pctRaw ? Number(pctRaw) : null,
-      image: pendingImageDataUrl || null
-    });
+
+    if(editingTaskId){
+      const t = newTasks.find(x => x.id === editingTaskId);
+      if(t){
+        t.date = date;
+        t.description = description;
+        t.hours = hoursRaw ? Number(hoursRaw) : null;
+        t.pct = pctRaw ? Number(pctRaw) : null;
+        t.image = pendingImageDataUrl || null;
+      }
+    } else {
+      newTasks.push({
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+        date,
+        description,
+        done: false,
+        hours: hoursRaw ? Number(hoursRaw) : null,
+        pct: pctRaw ? Number(pctRaw) : null,
+        image: pendingImageDataUrl || null
+      });
+    }
+
     selectedDate = date;
     const ok = await persist(config, newTasks, document.getElementById('dashError'));
-    if(ok){ pendingImageDataUrl = null; }
+    if(ok){ pendingImageDataUrl = null; editingTaskId = null; }
   };
+
+  app.querySelectorAll('[data-edit]').forEach(el => {
+    el.onclick = () => {
+      const id = el.getAttribute('data-edit');
+      const t = tasks.find(x => x.id === id);
+      if(!t) return;
+      editingTaskId = id;
+      pendingImageDataUrl = t.image || null;
+      render();
+    };
+  });
 
   app.querySelectorAll('.task-check[data-id]').forEach(el => {
     el.onclick = async () => {
