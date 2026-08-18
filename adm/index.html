@@ -81,7 +81,7 @@
     display:block; font-size:12px; color:var(--text-dim); margin-bottom:6px;
   }
   .field{ margin-bottom:12px; }
-  input[type=date], input[type=text], input[type=password]{
+  input[type=date], input[type=text], input[type=password], input[type=number], select{
     background:var(--surface-2);
     border:1px solid var(--border);
     color:var(--text);
@@ -91,7 +91,13 @@
     font-size:14px;
     width:100%;
   }
-  input:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+  input:focus, select:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+  input[type=file]{
+    color:var(--text-dim);
+    font-size:12.5px;
+    width:100%;
+  }
+  .image-preview{ display:flex; align-items:center; gap:10px; margin-top:8px; }
   button{
     background:var(--accent);
     color:#1A1408;
@@ -194,12 +200,33 @@
     font-size:13px;
     font-weight:700;
   }
+  .task-body{ flex:1; min-width:0; }
   .task-text{
-    flex:1;
     font-size:14px;
     line-height:1.4;
   }
   .task-text.done{ color:var(--text); }
+  .task-meta{
+    display:flex; gap:8px; align-items:center; margin-top:4px;
+    font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--text-dim);
+  }
+  .pct-badge{ padding:1px 7px; border-radius:8px; background:var(--surface-2); }
+  .pct-badge.good{ color:var(--good); }
+  .pct-badge.mid{ color:var(--accent); }
+  .pct-badge.pend{ color:var(--pending); }
+  .task-thumb{
+    flex:none; width:40px; height:40px; object-fit:cover;
+    border-radius:6px; border:1px solid var(--border); cursor:zoom-in;
+  }
+  .lightbox-overlay{
+    position:fixed; inset:0; background:rgba(10,16,15,0.88);
+    display:flex; align-items:center; justify-content:center;
+    padding:24px; z-index:1000; cursor:zoom-out;
+  }
+  .lightbox-overlay img{
+    max-width:100%; max-height:100%; border-radius:10px;
+    box-shadow:0 12px 40px rgba(0,0,0,0.5);
+  }
   .task-remove{
     flex:none;
     background:none; border:none;
@@ -255,6 +282,7 @@ let state = { config: null, tasks: [] };
 let saving = false;
 let calView = null;
 let selectedDate = todayStr();
+let pendingImageDataUrl = null;
 
 const MONTHS_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const DOW_PT = ['D','S','T','Q','Q','S','S'];
@@ -281,6 +309,69 @@ function escapeHtml(str){
   return div.innerHTML;
 }
 
+function pctColorClass(pct){
+  if(pct >= 80) return 'good';
+  if(pct >= 40) return 'mid';
+  return 'pend';
+}
+
+function resizeImageFile(file, maxDim){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if(width > maxDim || height > maxDim){
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function openLightbox(src){
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox-overlay';
+  overlay.innerHTML = `<img src="${src}" alt="Anexo ampliado">`;
+  overlay.onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+}
+
+function bindThumbs(root){
+  root.querySelectorAll('.task-thumb').forEach(img => {
+    img.onclick = () => openLightbox(img.src);
+  });
+}
+
+function updateImagePreview(){
+  const wrap = document.getElementById('imagePreviewWrap');
+  if(!wrap) return;
+  if(pendingImageDataUrl){
+    wrap.innerHTML = `<div class="image-preview"><img class="task-thumb" src="${pendingImageDataUrl}" alt="Pré-visualização" /><button type="button" class="settings-toggle" id="removeImageBtn">Remover imagem</button></div>`;
+    bindThumbs(wrap);
+    document.getElementById('removeImageBtn').onclick = () => {
+      pendingImageDataUrl = null;
+      const fileInput = document.getElementById('taskImage');
+      if(fileInput) fileInput.value = '';
+      updateImagePreview();
+    };
+  } else {
+    wrap.innerHTML = '';
+  }
+}
+
 function dayStatus(items){
   if(!items || items.length === 0) return null;
   const done = items.filter(t => t.done).length;
@@ -300,11 +391,11 @@ async function promptPassword(){
 }
 
 async function persist(newConfig, newTasks, errorEl){
-  if(saving) return;
+  if(saving) return false;
   saving = true;
   let password = getPassword();
   if(!password){ password = await promptPassword(); }
-  if(!password){ saving = false; return; }
+  if(!password){ saving = false; return false; }
 
   const { error } = await sb.rpc('update_cronograma_state', {
     p_password: password,
@@ -318,11 +409,12 @@ async function persist(newConfig, newTasks, errorEl){
     localStorage.removeItem(PASSWORD_STORAGE_KEY);
     if(errorEl) errorEl.textContent = 'Senha incorreta. Tente salvar de novo.';
     else alert('Senha incorreta. Tente de novo.');
-    return;
+    return false;
   }
 
   state = { config: newConfig, tasks: newTasks };
   render();
+  return true;
 }
 
 function render(){
@@ -413,7 +505,16 @@ function renderDashboard(app){
       : `<div class="task-list">${selectedItems.map(t => `
           <div class="task-item">
             <div class="task-check ${t.done ? 'done' : ''}" data-id="${t.id}"></div>
-            <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.description)}</div>
+            <div class="task-body">
+              <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.description)}</div>
+              ${(t.hours != null || t.pct != null) ? `
+                <div class="task-meta">
+                  ${t.hours != null ? `<span>${t.hours}h estudadas</span>` : ''}
+                  ${t.pct != null ? `<span class="pct-badge ${pctColorClass(t.pct)}">${t.pct}% de acerto</span>` : ''}
+                </div>
+              ` : ''}
+            </div>
+            ${t.image ? `<img class="task-thumb" src="${t.image}" alt="Anexo do item">` : ''}
             <button class="task-remove" data-remove="${t.id}" aria-label="Remover">×</button>
           </div>
         `).join('')}</div>`;
@@ -464,6 +565,26 @@ function renderDashboard(app){
           <label for="taskDesc">O que foi (ou será) proposto para esse dia</label>
           <input type="text" id="taskDesc" placeholder="Ex: Revisar capítulo 3 - Redes" required />
         </div>
+        <div class="field">
+          <label for="taskHours">Horas estudadas (opcional)</label>
+          <input type="number" id="taskHours" min="0" step="0.5" placeholder="Ex: 2" />
+        </div>
+        <div class="field">
+          <label for="taskPct">Aproveitamento (opcional)</label>
+          <select id="taskPct">
+            <option value="">—</option>
+            <option value="20">20%</option>
+            <option value="40">40%</option>
+            <option value="60">60%</option>
+            <option value="80">80%</option>
+            <option value="100">100%</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="taskImage">Anexar imagem (PNG, opcional)</label>
+          <input type="file" id="taskImage" accept="image/png" />
+          <div id="imagePreviewWrap"></div>
+        </div>
         <button type="submit">Adicionar</button>
       </form>
     </div>
@@ -492,20 +613,41 @@ function renderDashboard(app){
     };
   });
 
+  updateImagePreview();
+  bindThumbs(app);
+
+  document.getElementById('taskImage').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if(!file){ pendingImageDataUrl = null; updateImagePreview(); return; }
+    try{
+      pendingImageDataUrl = await resizeImageFile(file, 800);
+    }catch(err){
+      pendingImageDataUrl = null;
+      console.error('Erro ao processar imagem', err);
+    }
+    updateImagePreview();
+  });
+
   document.getElementById('taskForm').onsubmit = async (e) => {
     e.preventDefault();
     const date = document.getElementById('taskDate').value || todayStr();
     const description = document.getElementById('taskDesc').value.trim();
     if(!description) return;
+    const hoursRaw = document.getElementById('taskHours').value;
+    const pctRaw = document.getElementById('taskPct').value;
     const newTasks = clone(tasks);
     newTasks.push({
       id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
       date,
       description,
-      done: false
+      done: false,
+      hours: hoursRaw ? Number(hoursRaw) : null,
+      pct: pctRaw ? Number(pctRaw) : null,
+      image: pendingImageDataUrl || null
     });
     selectedDate = date;
-    await persist(config, newTasks, document.getElementById('dashError'));
+    const ok = await persist(config, newTasks, document.getElementById('dashError'));
+    if(ok){ pendingImageDataUrl = null; }
   };
 
   app.querySelectorAll('.task-check[data-id]').forEach(el => {

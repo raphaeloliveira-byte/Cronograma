@@ -155,12 +155,33 @@
     font-size:13px;
     font-weight:700;
   }
+  .task-body{ flex:1; min-width:0; }
   .task-text{
-    flex:1;
     font-size:14px;
     line-height:1.4;
   }
   .task-text.done{ color:var(--text); }
+  .task-meta{
+    display:flex; gap:8px; align-items:center; margin-top:4px;
+    font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--text-dim);
+  }
+  .pct-badge{ padding:1px 7px; border-radius:8px; background:var(--surface-2); }
+  .pct-badge.good{ color:var(--good); }
+  .pct-badge.mid{ color:var(--accent); }
+  .pct-badge.pend{ color:var(--pending); }
+  .task-thumb{
+    flex:none; width:40px; height:40px; object-fit:cover;
+    border-radius:6px; border:1px solid var(--border); cursor:zoom-in;
+  }
+  .lightbox-overlay{
+    position:fixed; inset:0; background:rgba(10,16,15,0.88);
+    display:flex; align-items:center; justify-content:center;
+    padding:24px; z-index:1000; cursor:zoom-out;
+  }
+  .lightbox-overlay img{
+    max-width:100%; max-height:100%; border-radius:10px;
+    box-shadow:0 12px 40px rgba(0,0,0,0.5);
+  }
 
   .hint{ font-size:12px; color:var(--text-dim); margin-top:10px; line-height:1.5; }
   .empty{ color:var(--text-dim); font-size:13px; text-align:center; padding:20px 0; }
@@ -221,6 +242,20 @@ function dayStatus(items){
   if(done === items.length) return 'done';
   if(done === 0) return 'pending';
   return 'partial';
+}
+
+function pctColorClass(pct){
+  if(pct >= 80) return 'good';
+  if(pct >= 40) return 'mid';
+  return 'pend';
+}
+
+function openLightbox(src){
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox-overlay';
+  overlay.innerHTML = `<img src="${src}" alt="Anexo ampliado">`;
+  overlay.onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
 }
 
 function render(){
@@ -284,7 +319,16 @@ function render(){
       : `<div class="task-list">${selectedItems.map(t => `
           <div class="task-item">
             <div class="task-check ${t.done ? 'done' : ''}"></div>
-            <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.description)}</div>
+            <div class="task-body">
+              <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.description)}</div>
+              ${(t.hours != null || t.pct != null) ? `
+                <div class="task-meta">
+                  ${t.hours != null ? `<span>${t.hours}h estudadas</span>` : ''}
+                  ${t.pct != null ? `<span class="pct-badge ${pctColorClass(t.pct)}">${t.pct}% de acerto</span>` : ''}
+                </div>
+              ` : ''}
+            </div>
+            ${t.image ? `<img class="task-thumb" src="${t.image}" alt="Anexo do item">` : ''}
           </div>
         `).join('')}</div>`;
 
@@ -342,6 +386,10 @@ function render(){
       selectedDate = el.getAttribute('data-date');
       render();
     };
+  });
+
+  app.querySelectorAll('.task-thumb').forEach(img => {
+    img.onclick = () => openLightbox(img.src);
   });
 }
 
