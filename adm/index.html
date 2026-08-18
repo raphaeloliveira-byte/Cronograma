@@ -18,6 +18,7 @@
     --good: #6FA98C;
     --good-dim: #2E4A3D;
     --pending: #A66A4E;
+    --pending-dim: #3E2E25;
     --border: #2C443E;
   }
   *{box-sizing:border-box;}
@@ -122,27 +123,47 @@
   }
 
   .task-list{ display:flex; flex-direction:column; gap:2px; }
-  .day-group{ margin-bottom:14px; }
-  .day-group:last-child{ margin-bottom:0; }
-  .day-heading{
-    font-family:'IBM Plex Mono', monospace;
-    font-size:11px;
-    color:var(--text-dim);
-    letter-spacing:0.04em;
-    margin-bottom:8px;
-    padding-bottom:6px;
-    border-bottom:1px solid var(--border);
-    display:flex;
-    justify-content:space-between;
+
+  .cal-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  .cal-nav{ display:flex; align-items:center; gap:8px; }
+  .cal-nav button{
+    background:var(--surface-2); color:var(--text-dim); border:1px solid var(--border);
+    border-radius:8px; padding:4px 10px; font-size:13px; font-weight:600; line-height:1;
   }
-  .day-heading .tag{
-    font-size:10px;
-    padding:1px 6px;
-    border-radius:10px;
-    background:var(--surface-2);
+  .cal-nav button:hover{ color:var(--text); border-color:var(--text-dim); }
+  .cal-month-label{
+    font-family:'IBM Plex Mono', monospace; font-size:12px; letter-spacing:0.05em;
+    text-transform:uppercase; color:var(--text); min-width:118px; text-align:center;
   }
-  .day-heading .tag.future{ color:var(--text-dim); }
-  .day-heading .tag.today{ color:var(--accent); background:rgba(232,163,61,0.12); }
+  .cal-legend{ display:flex; gap:10px; font-size:10px; color:var(--text-dim); }
+  .cal-legend span{ display:inline-flex; align-items:center; gap:4px; }
+  .dot{ width:7px; height:7px; border-radius:50%; display:inline-block; }
+  .dot.good{ background:var(--good); }
+  .dot.mid{ background:var(--accent); }
+  .dot.pend{ background:var(--pending); }
+
+  .cal-grid{ display:grid; grid-template-columns:repeat(7, 1fr); gap:4px; font-family:'IBM Plex Mono', monospace; }
+  .cal-dow{ font-size:9px; color:var(--text-dim); text-align:center; padding-bottom:4px; letter-spacing:0.04em; }
+  .cal-cell{
+    aspect-ratio:1; border-radius:7px; border:1px solid transparent;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-size:12px; gap:2px; background:var(--surface-2); color:var(--text-dim);
+    cursor:pointer;
+  }
+  .cal-cell.pad{ background:transparent; border:none; cursor:default; }
+  .cal-cell.done{ background:var(--good-dim); color:var(--text); border-color:var(--good); }
+  .cal-cell.partial{ background:rgba(232,163,61,0.14); color:var(--text); border-color:var(--accent); }
+  .cal-cell.pending{ background:var(--pending-dim); color:var(--text); border-color:var(--pending); }
+  .cal-cell.today{ box-shadow:0 0 0 2px var(--accent) inset; }
+  .cal-cell.selected{ outline:2px solid var(--text); outline-offset:1px; }
+  .cal-cell .n{ font-weight:500; }
+  .cal-cell .c{ font-size:8.5px; opacity:0.85; }
+
+  .day-detail{ margin-top:14px; padding-top:14px; border-top:1px dashed var(--border); }
+  .day-detail-label{
+    font-size:11px; color:var(--text-dim); margin-bottom:4px;
+    font-family:'IBM Plex Mono', monospace; letter-spacing:0.04em; text-transform:uppercase;
+  }
 
   .task-item{
     display:flex;
@@ -232,9 +253,15 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let state = { config: null, tasks: [] };
 let saving = false;
+let calView = null;
+let selectedDate = todayStr();
+
+const MONTHS_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const DOW_PT = ['D','S','T','Q','Q','S','S'];
 
 function clone(x){ return JSON.parse(JSON.stringify(x)); }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
+function pad2(n){ return String(n).padStart(2,'0'); }
 
 function daysUntil(dateStr){
   const target = new Date(dateStr + 'T00:00:00');
@@ -252,6 +279,14 @@ function escapeHtml(str){
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+function dayStatus(items){
+  if(!items || items.length === 0) return null;
+  const done = items.filter(t => t.done).length;
+  if(done === items.length) return 'done';
+  if(done === 0) return 'pending';
+  return 'partial';
 }
 
 function getPassword(){
@@ -343,33 +378,45 @@ function renderDashboard(app){
     if(!byDate[t.date]) byDate[t.date] = [];
     byDate[t.date].push(t);
   });
-  const dates = Object.keys(byDate).sort();
   const today = todayStr();
 
-  const listHtml = dates.length === 0
-    ? `<div class="empty">Nenhum item ainda. Adicione o que você propôs estudar em algum dia.</div>`
-    : dates.map(date => {
-        const items = byDate[date];
-        const tagClass = date === today ? 'today' : (date > today ? 'future' : '');
-        const tagLabel = date === today ? 'hoje' : (date > today ? 'planejado' : '');
-        return `
-          <div class="day-group">
-            <div class="day-heading">
-              <span>${formatDayLabel(date)}</span>
-              ${tagLabel ? `<span class="tag ${tagClass}">${tagLabel}</span>` : ''}
-            </div>
-            <div class="task-list">
-              ${items.map(t => `
-                <div class="task-item">
-                  <div class="task-check ${t.done ? 'done' : ''}" data-id="${t.id}"></div>
-                  <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.description)}</div>
-                  <button class="task-remove" data-remove="${t.id}" aria-label="Remover">×</button>
-                </div>
-              `).join('')}
-            </div>
+  if(!calView) calView = { year: new Date().getFullYear(), month: new Date().getMonth() };
+
+  const firstWeekday = new Date(calView.year, calView.month, 1).getDay();
+  const daysInMonth = new Date(calView.year, calView.month + 1, 0).getDate();
+
+  let cells = DOW_PT.map(d => `<div class="cal-dow">${d}</div>`).join('');
+  for(let i = 0; i < firstWeekday; i++){
+    cells += `<div class="cal-cell pad"></div>`;
+  }
+  for(let d = 1; d <= daysInMonth; d++){
+    const dateStr = `${calView.year}-${pad2(calView.month + 1)}-${pad2(d)}`;
+    const items = byDate[dateStr] || [];
+    const status = dayStatus(items);
+    const classes = ['cal-cell'];
+    if(status) classes.push(status);
+    if(dateStr === today) classes.push('today');
+    if(dateStr === selectedDate) classes.push('selected');
+    const countLabel = items.length ? `${items.filter(t => t.done).length}/${items.length}` : '';
+    cells += `<div class="${classes.join(' ')}" data-date="${dateStr}"><span class="n">${d}</span>${countLabel ? `<span class="c">${countLabel}</span>` : ''}</div>`;
+  }
+
+  const selectedItems = selectedDate ? (byDate[selectedDate] || []) : [];
+  const selectedLabel = selectedDate
+    ? (selectedDate === today ? `${formatDayLabel(selectedDate)} · hoje` : formatDayLabel(selectedDate))
+    : '';
+
+  const detailHtml = !selectedDate
+    ? `<div class="empty">Toque num dia para ver ou adicionar itens.</div>`
+    : selectedItems.length === 0
+      ? `<div class="empty">Nenhum item nesse dia ainda.</div>`
+      : `<div class="task-list">${selectedItems.map(t => `
+          <div class="task-item">
+            <div class="task-check ${t.done ? 'done' : ''}" data-id="${t.id}"></div>
+            <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.description)}</div>
+            <button class="task-remove" data-remove="${t.id}" aria-label="Remover">×</button>
           </div>
-        `;
-      }).join('');
+        `).join('')}</div>`;
 
   app.innerHTML = `
     <div class="badge-adm">Admin</div>
@@ -386,11 +433,32 @@ function renderDashboard(app){
     </div>
 
     <div class="card">
+      <div class="cal-head">
+        <div class="cal-nav">
+          <button type="button" id="prevMonth" aria-label="Mês anterior">‹</button>
+          <span class="cal-month-label">${MONTHS_PT[calView.month]} ${calView.year}</span>
+          <button type="button" id="nextMonth" aria-label="Próximo mês">›</button>
+        </div>
+        <div class="cal-legend">
+          <span><i class="dot good"></i>completo</span>
+          <span><i class="dot mid"></i>parcial</span>
+          <span><i class="dot pend"></i>pendente</span>
+        </div>
+      </div>
+      <div class="cal-grid">${cells}</div>
+
+      <div class="day-detail">
+        <div class="day-detail-label">${selectedLabel || 'Dia'}</div>
+        ${detailHtml}
+      </div>
+    </div>
+
+    <div class="card">
       <div class="section-title">Adicionar item</div>
       <form id="taskForm">
         <div class="field">
           <label for="taskDate">Dia</label>
-          <input type="date" id="taskDate" value="${todayStr()}" />
+          <input type="date" id="taskDate" value="${selectedDate || todayStr()}" />
         </div>
         <div class="field">
           <label for="taskDesc">O que foi (ou será) proposto para esse dia</label>
@@ -400,15 +468,29 @@ function renderDashboard(app){
       </form>
     </div>
 
-    <div class="card">
-      <div class="section-title">Seus dias</div>
-      ${listHtml}
-    </div>
-
     <button class="settings-toggle" id="editSettings">Editar prova</button>
     <div class="hint">O link público (sem /adm) mostra sempre o progresso mais recente para o seu supervisor, em modo somente leitura.</div>
     <div class="error" id="dashError"></div>
   `;
+
+  document.getElementById('prevMonth').onclick = () => {
+    calView.month -= 1;
+    if(calView.month < 0){ calView.month = 11; calView.year -= 1; }
+    selectedDate = null;
+    render();
+  };
+  document.getElementById('nextMonth').onclick = () => {
+    calView.month += 1;
+    if(calView.month > 11){ calView.month = 0; calView.year += 1; }
+    selectedDate = null;
+    render();
+  };
+  app.querySelectorAll('.cal-cell[data-date]').forEach(el => {
+    el.onclick = () => {
+      selectedDate = el.getAttribute('data-date');
+      render();
+    };
+  });
 
   document.getElementById('taskForm').onsubmit = async (e) => {
     e.preventDefault();
@@ -422,10 +504,11 @@ function renderDashboard(app){
       description,
       done: false
     });
+    selectedDate = date;
     await persist(config, newTasks, document.getElementById('dashError'));
   };
 
-  app.querySelectorAll('.task-check').forEach(el => {
+  app.querySelectorAll('.task-check[data-id]').forEach(el => {
     el.onclick = async () => {
       const id = el.getAttribute('data-id');
       const newTasks = clone(tasks);
