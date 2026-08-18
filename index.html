@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -76,42 +76,6 @@
     border-radius:4px; transition:width .4s ease;
   }
 
-  .field label{
-    display:block; font-size:12px; color:var(--text-dim); margin-bottom:6px;
-  }
-  .field{ margin-bottom:12px; }
-  input[type=date], input[type=text]{
-    background:var(--surface-2);
-    border:1px solid var(--border);
-    color:var(--text);
-    border-radius:8px;
-    padding:10px 12px;
-    font-family:'IBM Plex Sans', sans-serif;
-    font-size:14px;
-    width:100%;
-  }
-  input:focus{ outline:2px solid var(--accent); outline-offset:1px; }
-  button{
-    background:var(--accent);
-    color:#1A1408;
-    border:none;
-    border-radius:8px;
-    padding:10px 16px;
-    font-weight:600;
-    font-size:14px;
-    cursor:pointer;
-    white-space:nowrap;
-    font-family:'IBM Plex Sans', sans-serif;
-  }
-  button:hover{ filter:brightness(1.08); }
-  button.ghost{
-    background:transparent;
-    color:var(--text-dim);
-    border:1px solid var(--border);
-    font-weight:500;
-  }
-  button.ghost:hover{ color:var(--text); border-color:var(--text-dim); }
-
   .section-title{
     font-size:12px;
     letter-spacing:0.08em;
@@ -155,12 +119,10 @@
     border-radius:6px;
     border:1.5px solid var(--border);
     background:var(--surface-2);
-    cursor:pointer;
     display:flex;
     align-items:center;
     justify-content:center;
     margin-top:1px;
-    transition:all .15s ease;
   }
   .task-check.done{
     background:var(--good);
@@ -178,26 +140,14 @@
     line-height:1.4;
   }
   .task-text.done{ color:var(--text-dim); text-decoration:line-through; }
-  .task-remove{
-    flex:none;
-    background:none; border:none;
-    color:var(--text-dim);
-    font-size:16px;
-    line-height:1;
-    padding:2px 4px;
-    cursor:pointer;
-  }
-  .task-remove:hover{ color:var(--pending); }
 
-  .settings-toggle{
-    background:none; border:none; color:var(--text-dim); font-size:12px;
-    cursor:pointer; text-decoration:underline; padding:0; margin-top:4px;
-  }
-  .settings-toggle:hover{ color:var(--text); }
-
-  .setup{ display:flex; flex-direction:column; gap:12px; }
   .hint{ font-size:12px; color:var(--text-dim); margin-top:10px; line-height:1.5; }
   .empty{ color:var(--text-dim); font-size:13px; text-align:center; padding:20px 0; }
+  .live-dot{
+    display:inline-block; width:6px; height:6px; border-radius:50%;
+    background:var(--good); margin-right:6px; vertical-align:middle;
+  }
+  .status-line{ font-size:11px; color:var(--text-dim); text-align:center; margin-top:18px; }
 
   ::selection{ background:var(--accent-dim); }
 </style>
@@ -207,12 +157,17 @@
   <div class="empty">Carregando...</div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
-const STORAGE_KEY = 'study-tracker-state';
-let state = null;
+// Preencha com os dados do seu projeto (Supabase > Settings > API).
+const SUPABASE_URL = 'https://kftcgniqfwlkxmgrychy.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_QpJiGfVXO2kl3LGYEq3hiQ_QKB0wUWy';
 
-function fmtDate(d){ return d.toISOString().slice(0,10); }
-function todayStr(){ return fmtDate(new Date()); }
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let state = { config: null, tasks: [] };
+
+function todayStr(){ return new Date().toISOString().slice(0,10); }
 
 function daysUntil(dateStr){
   const target = new Date(dateStr + 'T00:00:00');
@@ -226,63 +181,23 @@ function formatDayLabel(dateStr){
   return d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' });
 }
 
-async function loadState(){
-  try{
-    const res = await window.storage.get(STORAGE_KEY, true);
-    return res ? JSON.parse(res.value) : null;
-  }catch(e){
-    return null;
-  }
-}
-async function saveState(){
-  try{
-    await window.storage.set(STORAGE_KEY, JSON.stringify(state), true);
-  }catch(e){
-    console.error('Erro ao salvar', e);
-  }
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
 
 function render(){
   const app = document.getElementById('app');
-  if(!state || !state.config){
-    renderSetup(app);
-  } else {
-    renderDashboard(app);
+  if(!state.config){
+    app.innerHTML = `
+      <div class="eyebrow">Sprint de Estudos</div>
+      <h1>Ainda sem cronograma</h1>
+      <div class="empty">A prova ainda não foi configurada.</div>
+    `;
+    return;
   }
-}
 
-function renderSetup(app){
-  app.innerHTML = `
-    <div class="eyebrow">Sprint de Estudos</div>
-    <h1>Vamos configurar sua prova</h1>
-    <div class="countdown">Só o essencial pra começar a marcar seu progresso.</div>
-    <div class="card">
-      <div class="setup">
-        <div class="field">
-          <label for="examName">Nome da prova</label>
-          <input type="text" id="examName" placeholder="Ex: Certificação AWS" />
-        </div>
-        <div class="field">
-          <label for="examDate">Data da prova</label>
-          <input type="date" id="examDate" />
-        </div>
-        <button id="saveSetup">Começar</button>
-      </div>
-    </div>
-  `;
-  document.getElementById('saveSetup').onclick = async () => {
-    const examName = document.getElementById('examName').value.trim() || 'Minha prova';
-    const examDate = document.getElementById('examDate').value || todayStr();
-    state = {
-      config: { examName, examDate },
-      tasks: []
-    };
-    await saveState();
-    render();
-  };
-}
-
-function renderDashboard(app){
   const { config, tasks } = state;
   const dias = daysUntil(config.examDate);
   const diasTexto = dias > 0
@@ -293,7 +208,6 @@ function renderDashboard(app){
   const done = tasks.filter(t => t.done).length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
-  // group tasks by date, sorted by date ascending
   const byDate = {};
   tasks.forEach(t => {
     if(!byDate[t.date]) byDate[t.date] = [];
@@ -303,7 +217,7 @@ function renderDashboard(app){
   const today = todayStr();
 
   const listHtml = dates.length === 0
-    ? `<div class="empty">Nenhum item ainda. Adicione o que você propôs estudar em algum dia.</div>`
+    ? `<div class="empty">Nenhum item ainda.</div>`
     : dates.map(date => {
         const items = byDate[date];
         const tagClass = date === today ? 'today' : (date > today ? 'future' : '');
@@ -317,9 +231,8 @@ function renderDashboard(app){
             <div class="task-list">
               ${items.map(t => `
                 <div class="task-item">
-                  <div class="task-check ${t.done ? 'done' : ''}" data-id="${t.id}"></div>
+                  <div class="task-check ${t.done ? 'done' : ''}"></div>
                   <div class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.description)}</div>
-                  <button class="task-remove" data-remove="${t.id}" aria-label="Remover">×</button>
                 </div>
               `).join('')}
             </div>
@@ -341,109 +254,36 @@ function renderDashboard(app){
     </div>
 
     <div class="card">
-      <div class="section-title">Adicionar item</div>
-      <form id="taskForm">
-        <div class="field">
-          <label for="taskDate">Dia</label>
-          <input type="date" id="taskDate" value="${todayStr()}" />
-        </div>
-        <div class="field">
-          <label for="taskDesc">O que foi (ou será) proposto para esse dia</label>
-          <input type="text" id="taskDesc" placeholder="Ex: Revisar capítulo 3 - Redes" required />
-        </div>
-        <button type="submit">Adicionar</button>
-      </form>
-    </div>
-
-    <div class="card">
-      <div class="section-title">Seus dias</div>
+      <div class="section-title">Dias</div>
       ${listHtml}
     </div>
 
-    <button class="settings-toggle" id="editSettings">Editar prova</button>
-    <div class="hint">Compartilhe o link desta página com seu supervisor — os dados são compartilhados, então ele verá sempre o progresso mais recente.</div>
+    <div class="status-line"><span class="live-dot"></span>Atualiza automaticamente</div>
   `;
-
-  document.getElementById('taskForm').onsubmit = async (e) => {
-    e.preventDefault();
-    const date = document.getElementById('taskDate').value || todayStr();
-    const description = document.getElementById('taskDesc').value.trim();
-    if(!description) return;
-    state.tasks.push({
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
-      date,
-      description,
-      done: false
-    });
-    await saveState();
-    render();
-  };
-
-  app.querySelectorAll('.task-check').forEach(el => {
-    el.onclick = async () => {
-      const id = el.getAttribute('data-id');
-      const t = state.tasks.find(x => x.id === id);
-      if(t){
-        t.done = !t.done;
-        await saveState();
-        render();
-      }
-    };
-  });
-
-  app.querySelectorAll('[data-remove]').forEach(el => {
-    el.onclick = async () => {
-      const id = el.getAttribute('data-remove');
-      state.tasks = state.tasks.filter(x => x.id !== id);
-      await saveState();
-      render();
-    };
-  });
-
-  document.getElementById('editSettings').onclick = () => renderEdit(app);
 }
 
-function renderEdit(app){
-  const { config } = state;
-  app.innerHTML = `
-    <div class="eyebrow">Sprint de Estudos</div>
-    <h1>Editar configuração</h1>
-    <div class="card">
-      <div class="setup">
-        <div class="field">
-          <label for="examName">Nome da prova</label>
-          <input type="text" id="examName" value="${escapeHtml(config.examName)}" />
-        </div>
-        <div class="field">
-          <label for="examDate">Data da prova</label>
-          <input type="date" id="examDate" value="${config.examDate}" />
-        </div>
-        <div style="display:flex; gap:8px;">
-          <button id="saveEdit">Salvar</button>
-          <button class="ghost" id="cancelEdit" type="button">Cancelar</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.getElementById('saveEdit').onclick = async () => {
-    state.config.examName = document.getElementById('examName').value.trim() || config.examName;
-    state.config.examDate = document.getElementById('examDate').value || config.examDate;
-    await saveState();
-    render();
-  };
-  document.getElementById('cancelEdit').onclick = () => render();
-}
-
-function escapeHtml(str){
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-(async () => {
-  state = await loadState();
+async function load(){
+  const { data, error } = await sb
+    .from('cronograma_state')
+    .select('config,tasks')
+    .eq('id', 1)
+    .single();
+  if(!error && data){
+    state = { config: data.config, tasks: data.tasks || [] };
+  }
   render();
-})();
+}
+
+sb.channel('cronograma_state_public')
+  .on('postgres_changes', { event: '*', schema: 'public', table: 'cronograma_state', filter: 'id=eq.1' }, (payload) => {
+    if(payload.new){
+      state = { config: payload.new.config, tasks: payload.new.tasks || [] };
+      render();
+    }
+  })
+  .subscribe();
+
+load();
 </script>
 </body>
 </html>
