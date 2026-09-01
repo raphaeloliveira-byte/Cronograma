@@ -35,6 +35,7 @@
     justify-content:center;
   }
   .wrap{ width:100%; max-width:520px; }
+  .wrap.wide{ max-width:760px; }
 
   .eyebrow{
     font-family:'IBM Plex Mono', monospace;
@@ -200,6 +201,65 @@
   }
   .status-line{ font-size:11px; color:var(--text-dim); text-align:center; margin-top:18px; }
 
+  /* ---------------- PDI ---------------- */
+  .tabs{ display:flex; gap:4px; margin:0 0 24px; border-bottom:1px solid var(--border); }
+  .tabs button{
+    background:none; border:none; border-bottom:2px solid transparent; border-radius:0;
+    color:var(--text-dim); font-family:'IBM Plex Mono', monospace;
+    font-size:11px; letter-spacing:0.14em; text-transform:uppercase; font-weight:500;
+    padding:9px 12px; cursor:pointer;
+  }
+  .tabs button:hover{ color:var(--text); }
+  .tabs button.active{ color:var(--accent); border-bottom-color:var(--accent); }
+
+  .pdi-point{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:14px; padding:20px; margin-bottom:18px;
+  }
+  .pdi-point-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .pdi-point-label{
+    font-family:'IBM Plex Mono', monospace; font-size:11px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--accent);
+  }
+
+  .pdi-block{ border:1px solid var(--border); border-radius:12px; padding:16px; margin-top:16px; }
+  .pdi-block.good{ border-color:var(--good); background:rgba(111,169,140,0.06); }
+  .pdi-block.accent{ border-color:var(--accent); background:rgba(232,163,61,0.06); }
+  .pdi-block.pending{ border-color:var(--pending); background:rgba(166,106,78,0.07); }
+  .pdi-block-title{ font-size:14px; font-weight:600; letter-spacing:-0.01em; }
+  .pdi-block.good .pdi-block-title{ color:var(--good); }
+  .pdi-block.accent .pdi-block-title{ color:var(--accent); }
+  .pdi-block.pending .pdi-block-title{ color:var(--pending); }
+  .pdi-block-sub{ font-size:11.5px; color:var(--text-dim); margin:3px 0 14px; line-height:1.4; }
+
+  .pdi-sub-label{ display:block; font-size:12px; color:var(--text-dim); margin-bottom:6px; }
+  .pdi-grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px; }
+
+  .pdi-title-ro{
+    background:var(--surface-2); border:1px solid var(--border); border-radius:10px;
+    padding:12px 14px; font-size:15px; line-height:1.45; white-space:pre-wrap;
+  }
+  .pdi-ro-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+  .pdi-ro-list li{
+    display:flex; gap:10px; align-items:flex-start; justify-content:space-between;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:9px;
+    padding:9px 12px; font-size:13.5px; line-height:1.45;
+  }
+  .pdi-date-chip{
+    flex:none; font-family:'IBM Plex Mono', monospace; font-size:11px;
+    color:var(--text-dim); padding-top:2px;
+  }
+  .pdi-ro-box{
+    background:var(--surface-2); border:1px solid var(--border); border-radius:9px;
+    padding:10px 12px; font-size:13.5px; line-height:1.5;
+    white-space:pre-wrap; min-height:42px;
+  }
+  .pdi-ro-box.blank{ color:var(--text-dim); }
+
+  @media (max-width:620px){
+    .pdi-grid{ grid-template-columns:1fr; }
+  }
+
   ::selection{ background:var(--accent-dim); }
 </style>
 </head>
@@ -216,12 +276,29 @@ const SUPABASE_ANON_KEY = 'sb_publishable_QpJiGfVXO2kl3LGYEq3hiQ_QKB0wUWy';
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-let state = { config: null, tasks: [] };
+let state = { config: null, tasks: [], pdi: { points: [] } };
 let calView = null;
 let selectedDate = todayStr();
+let activeTab = 'cronograma';
 
 const MONTHS_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const DOW_PT = ['D','S','T','Q','Q','S','S'];
+
+const PDI_BLOCKS = [
+  { key:'fazendo',   pct:'70%', title:'Aprender fazendo',
+    sub:'Projetos, desafios, mudanças de escopo', tone:'good' },
+  { key:'outros',    pct:'20%', title:'Aprender com outros',
+    sub:'Feedbacks, conversas com referências internas ou acompanhamento direto', tone:'accent' },
+  { key:'estudando', pct:'10%', title:'Aprender estudando',
+    sub:'Leitura, cursos técnicos ou pesquisas teóricas', tone:'pending' }
+];
+
+const PDI_TEXT_FIELDS = [
+  { key:'impact',     label:'O que será impactado' },
+  { key:'measure',    label:'Como será medido' },
+  { key:'conclusion', label:'Conclusão Rapha' },
+  { key:'feedback',   label:'Feedbacks recebidos' }
+];
 
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 
@@ -243,6 +320,37 @@ function escapeHtml(str){
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+function formatBrDate(dateStr){
+  if(!dateStr) return '';
+  const [y, m, d] = dateStr.split('-');
+  return (y && m && d) ? `${d}/${m}/${y}` : dateStr;
+}
+
+// Mesmo normalizador usado no admin: garante os três blocos e os quatro campos.
+function normalizePdi(raw){
+  const points = (raw && Array.isArray(raw.points)) ? JSON.parse(JSON.stringify(raw.points)) : [];
+  points.forEach(pt => {
+    if(!pt.id) pt.id = uid();
+    if(typeof pt.title !== 'string') pt.title = '';
+    if(!pt.blocks || typeof pt.blocks !== 'object') pt.blocks = {};
+    PDI_BLOCKS.forEach(b => {
+      const blk = pt.blocks[b.key] || {};
+      pt.blocks[b.key] = {
+        items: Array.isArray(blk.items)
+          ? blk.items.map(it => ({ id: it.id || uid(), text: it.text || '', date: it.date || '' }))
+          : [],
+        impact: blk.impact || '',
+        measure: blk.measure || '',
+        conclusion: blk.conclusion || '',
+        feedback: blk.feedback || ''
+      };
+    });
+  });
+  return { points };
 }
 
 function dayStatus(items){
@@ -271,9 +379,90 @@ function openLightbox(src){
   document.body.appendChild(overlay);
 }
 
+function tabsHtml(){
+  const tabs = [['cronograma','Cronograma'], ['pdi','PDI']];
+  return `<div class="tabs">${tabs.map(([key, label]) =>
+    `<button type="button" data-tab="${key}" class="${activeTab === key ? 'active' : ''}">${label}</button>`
+  ).join('')}</div>`;
+}
+
+function bindTabs(app){
+  app.querySelectorAll('[data-tab]').forEach(el => {
+    el.onclick = () => {
+      if(el.getAttribute('data-tab') === activeTab) return;
+      activeTab = el.getAttribute('data-tab');
+      render();
+    };
+  });
+}
+
+function pdiRoBox(value){
+  const v = (value || '').trim();
+  return `<div class="pdi-ro-box ${v ? '' : 'blank'}">${v ? escapeHtml(v) : '—'}</div>`;
+}
+
+function pdiBlockPublicHtml(b, blk){
+  const items = blk.items.filter(it => (it.text || '').trim() || it.date);
+  const itemsHtml = items.length
+    ? `<ul class="pdi-ro-list">${items.map(it => `
+        <li>
+          <span>${escapeHtml(it.text || '—')}</span>
+          ${it.date ? `<span class="pdi-date-chip">${formatBrDate(it.date)}</span>` : ''}
+        </li>`).join('')}</ul>`
+    : `<div class="pdi-ro-box blank">—</div>`;
+
+  return `
+    <div class="pdi-block ${b.tone}">
+      <div class="pdi-block-title">${b.pct} ${b.title}</div>
+      <div class="pdi-block-sub">${b.sub}</div>
+
+      <span class="pdi-sub-label">O que será feito:</span>
+      ${itemsHtml}
+
+      <div class="pdi-grid">
+        ${PDI_TEXT_FIELDS.map(f => `
+          <div>
+            <span class="pdi-sub-label">${f.label}:</span>
+            ${pdiRoBox(blk[f.key])}
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+}
+
+function renderPdi(app){
+  const points = normalizePdi(state.pdi).points;
+
+  const pointsHtml = points.length === 0
+    ? `<div class="card"><div class="empty">O PDI ainda não foi preenchido.</div></div>`
+    : points.map((pt, i) => `
+        <div class="pdi-point">
+          <div class="pdi-point-head">
+            <span class="pdi-point-label">Ponto a desenvolver ${i + 1}</span>
+          </div>
+          <div class="pdi-title-ro">${pt.title.trim() ? escapeHtml(pt.title) : '—'}</div>
+          ${PDI_BLOCKS.map(b => pdiBlockPublicHtml(b, pt.blocks[b.key])).join('')}
+        </div>
+      `).join('');
+
+  app.innerHTML = `
+    ${tabsHtml()}
+    <div class="eyebrow">Plano de Desenvolvimento Individual</div>
+    <h1>PDI</h1>
+    <div class="countdown">Pontos a desenvolver no modelo <strong>70 · 20 · 10</strong>.</div>
+
+    ${pointsHtml}
+
+    <div class="status-line"><span class="live-dot"></span>Atualiza automaticamente</div>
+  `;
+
+  bindTabs(app);
+}
+
 function render(){
   const app = document.getElementById('app');
   if(!state.config){
+    app.className = 'wrap';
     app.innerHTML = `
       <div class="eyebrow">Sprint de Estudos</div>
       <h1>Ainda sem cronograma</h1>
@@ -281,6 +470,9 @@ function render(){
     `;
     return;
   }
+
+  app.className = activeTab === 'pdi' ? 'wrap wide' : 'wrap';
+  if(activeTab === 'pdi'){ renderPdi(app); return; }
 
   const { config, tasks } = state;
   const dias = daysUntil(config.examDate);
@@ -351,6 +543,7 @@ function render(){
         `).join('')}</div>`;
 
   app.innerHTML = `
+    ${tabsHtml()}
     <div class="eyebrow">Sprint de Estudos</div>
     <h1>${escapeHtml(config.examName)}</h1>
     <div class="countdown">${diasTexto}</div>
@@ -387,6 +580,8 @@ function render(){
     <div class="status-line"><span class="live-dot"></span>Atualiza automaticamente</div>
   `;
 
+  bindTabs(app);
+
   document.getElementById('prevMonth').onclick = () => {
     calView.month -= 1;
     if(calView.month < 0){ calView.month = 11; calView.year -= 1; }
@@ -414,11 +609,11 @@ function render(){
 async function load(){
   const { data, error } = await sb
     .from('cronograma_state')
-    .select('config,tasks')
+    .select('config,tasks,pdi')
     .eq('id', 1)
     .single();
   if(!error && data){
-    state = { config: data.config, tasks: data.tasks || [] };
+    state = { config: data.config, tasks: data.tasks || [], pdi: data.pdi || { points: [] } };
   }
   render();
 }
@@ -426,7 +621,11 @@ async function load(){
 sb.channel('cronograma_state_public')
   .on('postgres_changes', { event: '*', schema: 'public', table: 'cronograma_state', filter: 'id=eq.1' }, (payload) => {
     if(payload.new){
-      state = { config: payload.new.config, tasks: payload.new.tasks || [] };
+      state = {
+        config: payload.new.config,
+        tasks: payload.new.tasks || [],
+        pdi: payload.new.pdi || { points: [] }
+      };
       render();
     }
   })

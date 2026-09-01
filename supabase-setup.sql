@@ -72,3 +72,48 @@ grant execute on function public.update_cronograma_state(text, jsonb, jsonb) to 
 -- Habilita atualizações em tempo real para essa tabela (o link do supervisor
 -- atualiza sozinho quando você marca algo, sem precisar recarregar a página).
 alter publication supabase_realtime add table public.cronograma_state;
+
+-- ---------------------------------------------------------------------------
+-- PDI (Plano de Desenvolvimento Individual) — aba separada, mesma linha id = 1.
+-- Formato do jsonb:
+-- {
+--   "points": [
+--     { "id": "abc",
+--       "title": "Ponte entre Backoffice e Consultoria",
+--       "blocks": {
+--         "fazendo":   { "items": [{"id":"x","text":"...","date":"2026-09-30"}],
+--                        "impact": "", "measure": "", "conclusion": "", "feedback": "" },
+--         "outros":    { ... },
+--         "estudando": { ... }
+--       }
+--     }
+--   ]
+-- }
+-- ---------------------------------------------------------------------------
+alter table public.cronograma_state
+  add column if not exists pdi jsonb not null default '{"points":[]}'::jsonb;
+
+-- Função separada da do cronograma: salvar o PDI não mexe em config/tasks.
+create or replace function public.update_cronograma_pdi(p_password text, p_pdi jsonb)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_hash text;
+begin
+  select password_hash into v_hash from public._cronograma_admin where id = 1;
+  if v_hash is null or crypt(p_password, v_hash) <> v_hash then
+    raise exception 'senha inválida';
+  end if;
+
+  update public.cronograma_state
+  set pdi = coalesce(p_pdi, '{"points":[]}'::jsonb),
+      updated_at = now()
+  where id = 1;
+end;
+$$;
+
+revoke all on function public.update_cronograma_pdi(text, jsonb) from public;
+grant execute on function public.update_cronograma_pdi(text, jsonb) to anon, authenticated;
