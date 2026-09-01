@@ -253,6 +253,10 @@ function dayStatus(items){
   return 'partial';
 }
 
+function isExamTask(t){
+  return (t.description || '').trim().toLowerCase() === 'prova';
+}
+
 function pctColorClass(pct){
   if(pct >= 80) return 'good';
   if(pct >= 40) return 'mid';
@@ -312,7 +316,7 @@ function render(){
     if(status) classes.push(status);
     if(dateStr === today) classes.push('today');
     if(dateStr === selectedDate) classes.push('selected');
-    const examPassed = config.examDate && dateStr === config.examDate && dateStr <= today && status === 'done';
+    const examPassed = items.some(t => t.done && isExamTask(t));
     if(examPassed) classes.push('exam-passed');
     const countLabel = items.length ? `${items.filter(t => t.done).length}/${items.length}` : '';
     const badge = examPassed
