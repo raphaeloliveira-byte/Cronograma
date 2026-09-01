@@ -20,6 +20,8 @@
     --pending: #A66A4E;
     --pending-dim: #3E2E25;
     --border: #2C443E;
+    --gold: #D4AF37;
+    --gold-dim: rgba(212,175,55,0.16);
   }
   *{box-sizing:border-box;}
   body{
@@ -162,8 +164,15 @@
   .cal-cell.pending{ background:var(--pending-dim); color:var(--text); border-color:var(--pending); }
   .cal-cell.today{ box-shadow:0 0 0 2px var(--accent) inset; }
   .cal-cell.selected{ outline:2px solid var(--text); outline-offset:1px; }
+  .cal-cell.exam-passed{
+    background:var(--gold-dim); color:var(--text); border-color:var(--gold);
+    box-shadow:0 0 0 1px var(--gold), 0 0 12px rgba(212,175,55,0.3);
+  }
+  .cal-cell.exam-passed.selected{ outline-color:var(--gold); }
+  .cal-cell.exam-passed .n{ color:var(--gold); font-weight:600; }
   .cal-cell .n{ font-weight:500; }
   .cal-cell .c{ font-size:8.5px; opacity:0.85; }
+  .cal-cell .party{ font-size:11px; line-height:1; }
 
   .day-detail{ margin-top:14px; padding-top:14px; border-top:1px dashed var(--border); }
   .day-detail-label{
@@ -500,8 +509,13 @@ function renderDashboard(app){
     if(status) classes.push(status);
     if(dateStr === today) classes.push('today');
     if(dateStr === selectedDate) classes.push('selected');
+    const examPassed = config.examDate && dateStr === config.examDate && dateStr <= today && status === 'done';
+    if(examPassed) classes.push('exam-passed');
     const countLabel = items.length ? `${items.filter(t => t.done).length}/${items.length}` : '';
-    cells += `<div class="${classes.join(' ')}" data-date="${dateStr}"><span class="n">${d}</span>${countLabel ? `<span class="c">${countLabel}</span>` : ''}</div>`;
+    const badge = examPassed
+      ? `<span class="party" title="Aprovado!">🎉</span>`
+      : (countLabel ? `<span class="c">${countLabel}</span>` : '');
+    cells += `<div class="${classes.join(' ')}" data-date="${dateStr}"><span class="n">${d}</span>${badge}</div>`;
   }
 
   const selectedItems = selectedDate ? (byDate[selectedDate] || []) : [];
