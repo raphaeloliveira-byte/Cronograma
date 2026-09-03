@@ -329,7 +329,37 @@
   .pdi-item-row{ display:flex; gap:8px; align-items:center; margin-bottom:8px; }
   .pdi-item-row input[type=text]{ flex:1; min-width:0; }
   .pdi-item-row input[type=date]{ flex:none; width:158px; }
-  .pdi-grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px; }
+  .pdi-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px; }
+  /* coluna flex faz os dois campos da mesma linha terminarem alinhados */
+  .pdi-field{ display:flex; flex-direction:column; min-width:0; }
+  .pdi-field textarea, .pdi-field .pdi-ro-box{ flex:1; }
+  .pdi-attach{
+    display:flex; align-items:center; flex-wrap:wrap; gap:6px;
+    margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);
+  }
+  .pdi-thumb{ position:relative; display:inline-flex; line-height:0; }
+  .pdi-thumb .task-thumb{ width:34px; height:34px; }
+  .pdi-attach-btn{
+    display:inline-flex; align-items:center; gap:5px;
+    font-size:11.5px; color:var(--text-soft); line-height:1;
+    background:var(--surface-2); border:1px dashed var(--border);
+    border-radius:8px; padding:6px 10px; cursor:pointer;
+  }
+  .pdi-attach-btn:hover{ color:var(--text); border-color:var(--text-soft); }
+  .pdi-attach-btn input{ display:none; }
+  .pdi-thumb-del{
+    position:absolute; top:-5px; right:-5px;
+    width:16px; height:16px; padding:0; border-radius:50%;
+    background:var(--bg); color:var(--text-soft); border:1px solid var(--border);
+    font-size:11px; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .pdi-thumb-del:hover{ color:var(--pending); border-color:var(--pending); filter:none; }
+  .pdi-size{
+    font-family:'IBM Plex Mono', monospace; font-size:11px;
+    color:var(--text-dim); cursor:help;
+  }
+  .pdi-size.warn{ color:var(--accent); }
 
   .pdi-add{
     background:none; border:none; color:var(--good);
@@ -402,6 +432,9 @@ let pdiDirty = false;
 let pdiCollapsed = new Set(); // ids dos pontos recolhidos (só visual, não vai pro banco)
 
 const PDI_DEFAULT_POINTS = 4;
+// Os anexos vão em base64 dentro do JSON, então o peso do PDI é vigiado aqui.
+const PDI_WARN_BYTES = 3 * 1024 * 1024;
+const PDI_MAX_BYTES = 8 * 1024 * 1024;
 
 const MONTHS_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const DOW_PT = ['D','S','T','Q','Q','S','S'];
@@ -455,6 +488,12 @@ function escapeAttr(str){
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
+function formatBytes(n){
+  if(n < 1024) return `${n} B`;
+  if(n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`;
+}
+
 function formatBrDate(dateStr){
   if(!dateStr) return '';
   const [y, m, d] = dateStr.split('-');
@@ -462,7 +501,9 @@ function formatBrDate(dateStr){
 }
 
 function emptyPdiBlock(){
-  return { items: [], impact: '', measure: '', conclusion: '', feedback: '' };
+  const attach = {};
+  PDI_TEXT_FIELDS.forEach(f => { attach[f.key] = []; });
+  return { items: [], impact: '', measure: '', conclusion: '', feedback: '', attach };
 }
 
 function emptyPdiPoint(){
@@ -481,6 +522,15 @@ function normalizePdi(raw){
     if(!pt.blocks || typeof pt.blocks !== 'object') pt.blocks = {};
     PDI_BLOCKS.forEach(b => {
       const blk = pt.blocks[b.key] || {};
+      const attachRaw = (blk.attach && typeof blk.attach === 'object') ? blk.attach : {};
+      const attach = {};
+      PDI_TEXT_FIELDS.forEach(f => {
+        attach[f.key] = Array.isArray(attachRaw[f.key])
+          ? attachRaw[f.key]
+              .filter(a => a && a.data)
+              .map(a => ({ id: a.id || uid(), name: a.name || 'anexo', data: a.data }))
+          : [];
+      });
       pt.blocks[b.key] = {
         items: Array.isArray(blk.items)
           ? blk.items.map(it => ({ id: it.id || uid(), text: it.text || '', date: it.date || '' }))
@@ -488,7 +538,8 @@ function normalizePdi(raw){
         impact: blk.impact || '',
         measure: blk.measure || '',
         conclusion: blk.conclusion || '',
-        feedback: blk.feedback || ''
+        feedback: blk.feedback || '',
+        attach
       };
     });
   });
@@ -990,12 +1041,30 @@ function pdiBlockAdminHtml(pIdx, b, blk){
 
       <div class="pdi-grid">
         ${PDI_TEXT_FIELDS.map(f => `
-          <div>
+          <div class="pdi-field">
             <span class="pdi-sub-label">${f.label}:</span>
             <textarea data-pdi="${f.key}" data-p="${pIdx}" data-b="${b.key}" placeholder="${escapeAttr(f.label)}">${escapeHtml(blk[f.key])}</textarea>
+            ${pdiAttachAdminHtml(pIdx, b.key, f.key, blk.attach[f.key])}
           </div>
         `).join('')}
       </div>
+    </div>`;
+}
+
+// Rodapé de anexos de um campo: miniaturas já anexadas + botão de anexar.
+function pdiAttachAdminHtml(pIdx, bKey, fKey, files){
+  const thumbs = (files || []).map((a, i) => `
+    <span class="pdi-thumb">
+      <img class="task-thumb" src="${a.data}" alt="${escapeAttr(a.name)}" title="${escapeAttr(a.name)}">
+      <button type="button" class="pdi-thumb-del" data-del-file="${pIdx}|${bKey}|${fKey}|${i}" aria-label="Remover anexo">×</button>
+    </span>`).join('');
+  return `
+    <div class="pdi-attach">
+      ${thumbs}
+      <label class="pdi-attach-btn">
+        <span>📎 Anexar</span>
+        <input type="file" accept="image/*" multiple data-attach="${pIdx}|${bKey}|${fKey}">
+      </label>
     </div>`;
 }
 
@@ -1009,6 +1078,7 @@ function renderPdi(app){
   }
   const points = pdiDraft.points;
   const allCollapsed = points.length > 0 && points.every(pt => pdiCollapsed.has(pt.id));
+  const pdiBytes = JSON.stringify(pdiDraft).length;
 
   const pointsHtml = points.length === 0
     ? `<div class="card"><div class="empty">Nenhum ponto a desenvolver ainda.</div></div>`
@@ -1046,6 +1116,8 @@ function renderPdi(app){
       <button type="button" id="savePdi">Salvar PDI</button>
       ${points.length > 1 ? `<button type="button" class="ghost" id="toggleAllPdi">${allCollapsed ? 'Expandir todos' : 'Recolher todos'}</button>` : ''}
       <span class="pdi-save-state ${pdiDirty ? 'dirty' : ''}" id="pdiSaveState">${pdiDirty ? 'Alterações não salvas' : 'Tudo salvo'}</span>
+      <span class="pdi-size ${pdiBytes > PDI_WARN_BYTES ? 'warn' : ''}"
+            title="Tamanho do PDI com os anexos. Acima de ${formatBytes(PDI_MAX_BYTES)} o salvamento é bloqueado.">${formatBytes(pdiBytes)}</span>
     </div>
 
     ${pointsHtml}
@@ -1056,6 +1128,7 @@ function renderPdi(app){
 
   bindTabs(app);
   bindPdiInputs(app);
+  bindThumbs(app);
 
   document.getElementById('addPdiPoint').onclick = () => {
     const pt = emptyPdiPoint();
@@ -1075,8 +1148,14 @@ function renderPdi(app){
   }
 
   document.getElementById('savePdi').onclick = async () => {
-    document.getElementById('pdiError').textContent = '';
-    await persistPdi(clone(pdiDraft), document.getElementById('pdiError'));
+    const errorEl = document.getElementById('pdiError');
+    errorEl.textContent = '';
+    const bytes = JSON.stringify(pdiDraft).length;
+    if(bytes > PDI_MAX_BYTES){
+      errorEl.textContent = `O PDI está com ${formatBytes(bytes)} por causa dos anexos, acima do limite de ${formatBytes(PDI_MAX_BYTES)}. Remova alguns anexos antes de salvar.`;
+      return;
+    }
+    await persistPdi(clone(pdiDraft), errorEl);
   };
 }
 
@@ -1122,6 +1201,34 @@ function bindPdiInputs(app){
     el.onclick = () => {
       const [p, bk, i] = el.getAttribute('data-del-item').split('|');
       pdiDraft.points[Number(p)].blocks[bk].items.splice(Number(i), 1);
+      markPdiDirty();
+      render();
+    };
+  });
+
+  // Anexos por campo: reduz a imagem para 1000px, igual ao cronograma.
+  app.querySelectorAll('[data-attach]').forEach(el => {
+    el.addEventListener('change', async (e) => {
+      const chosen = Array.from(e.target.files || []);
+      if(chosen.length === 0) return;
+      const [p, bk, fk] = el.getAttribute('data-attach').split('|');
+      const blk = pdiDraft.points[Number(p)].blocks[bk];
+      for(const file of chosen){
+        try{
+          blk.attach[fk].push({ id: uid(), name: file.name, data: await resizeImageFile(file, 1000) });
+        }catch(err){
+          console.error('Erro ao processar anexo', err);
+        }
+      }
+      markPdiDirty();
+      render();
+    });
+  });
+
+  app.querySelectorAll('[data-del-file]').forEach(el => {
+    el.onclick = () => {
+      const [p, bk, fk, i] = el.getAttribute('data-del-file').split('|');
+      pdiDraft.points[Number(p)].blocks[bk].attach[fk].splice(Number(i), 1);
       markPdiDirty();
       render();
     };

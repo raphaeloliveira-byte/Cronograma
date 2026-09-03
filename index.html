@@ -253,7 +253,16 @@
     display:block; font-size:12.5px; font-weight:600;
     color:var(--text); margin-bottom:7px;
   }
-  .pdi-grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px; }
+  .pdi-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px; }
+  /* coluna flex faz os dois campos da mesma linha terminarem alinhados */
+  .pdi-field{ display:flex; flex-direction:column; min-width:0; }
+  .pdi-field textarea, .pdi-field .pdi-ro-box{ flex:1; }
+  .pdi-attach{
+    display:flex; align-items:center; flex-wrap:wrap; gap:6px;
+    margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);
+  }
+  .pdi-thumb{ position:relative; display:inline-flex; line-height:0; }
+  .pdi-thumb .task-thumb{ width:34px; height:34px; }
 
   .pdi-title-ro{
     background:var(--surface-2); border:1px solid var(--border); border-radius:10px;
@@ -345,6 +354,15 @@ function escapeHtml(str){
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
+// Para uso dentro de atributos HTML (escapa também as aspas).
+function escapeAttr(str){
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function formatBrDate(dateStr){
   if(!dateStr) return '';
   const [y, m, d] = dateStr.split('-');
@@ -360,6 +378,15 @@ function normalizePdi(raw){
     if(!pt.blocks || typeof pt.blocks !== 'object') pt.blocks = {};
     PDI_BLOCKS.forEach(b => {
       const blk = pt.blocks[b.key] || {};
+      const attachRaw = (blk.attach && typeof blk.attach === 'object') ? blk.attach : {};
+      const attach = {};
+      PDI_TEXT_FIELDS.forEach(f => {
+        attach[f.key] = Array.isArray(attachRaw[f.key])
+          ? attachRaw[f.key]
+              .filter(a => a && a.data)
+              .map(a => ({ id: a.id || uid(), name: a.name || 'anexo', data: a.data }))
+          : [];
+      });
       pt.blocks[b.key] = {
         items: Array.isArray(blk.items)
           ? blk.items.map(it => ({ id: it.id || uid(), text: it.text || '', date: it.date || '' }))
@@ -367,7 +394,8 @@ function normalizePdi(raw){
         impact: blk.impact || '',
         measure: blk.measure || '',
         conclusion: blk.conclusion || '',
-        feedback: blk.feedback || ''
+        feedback: blk.feedback || '',
+        attach
       };
     });
   });
@@ -441,12 +469,17 @@ function pdiBlockPublicHtml(b, blk){
       ${itemsHtml}
 
       <div class="pdi-grid">
-        ${PDI_TEXT_FIELDS.map(f => `
-          <div>
+        ${PDI_TEXT_FIELDS.map(f => {
+          const files = (blk.attach || {})[f.key] || [];
+          return `
+          <div class="pdi-field">
             <span class="pdi-sub-label">${f.label}:</span>
             ${pdiRoBox(blk[f.key])}
-          </div>
-        `).join('')}
+            ${files.length ? `<div class="pdi-attach">${files.map(a =>
+              `<span class="pdi-thumb"><img class="task-thumb" src="${a.data}" alt="${escapeAttr(a.name)}" title="${escapeAttr(a.name)}"></span>`
+            ).join('')}</div>` : ''}
+          </div>`;
+        }).join('')}
       </div>
     </div>`;
 }
@@ -458,6 +491,8 @@ function isPdiPointEmpty(pt){
     const blk = (pt.blocks || {})[b.key] || {};
     const items = Array.isArray(blk.items) ? blk.items : [];
     if(items.some(it => (it.text || '').trim() || it.date)) return false;
+    const attach = blk.attach || {};
+    if(PDI_TEXT_FIELDS.some(f => (attach[f.key] || []).length)) return false;
     return PDI_TEXT_FIELDS.every(f => !(blk[f.key] || '').trim());
   });
 }
@@ -510,6 +545,10 @@ function renderPdi(app){
       if(pdiCollapsed.has(id)) pdiCollapsed.delete(id); else pdiCollapsed.add(id);
       render();
     };
+  });
+
+  app.querySelectorAll('.task-thumb').forEach(img => {
+    img.onclick = () => openLightbox(img.src);
   });
 }
 
