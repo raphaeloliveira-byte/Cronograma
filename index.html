@@ -218,7 +218,22 @@
     background:var(--surface); border:1px solid var(--border);
     border-radius:14px; padding:20px; margin-bottom:18px;
   }
-  .pdi-point-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .pdi-point-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .pdi-point.collapsed .pdi-point-head{ margin-bottom:0; }
+  .pdi-point-title-line{
+    display:flex; align-items:baseline; gap:10px;
+    flex:1; min-width:0; cursor:pointer;
+  }
+  .pdi-point-preview{
+    font-family:'IBM Plex Sans', sans-serif; font-size:13px; font-weight:400;
+    color:var(--text-soft); text-transform:none; letter-spacing:0;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;
+  }
+  .pdi-icon-btn.chev{
+    font-size:12px; color:var(--text-soft); width:22px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .pdi-icon-btn.chev:hover{ color:var(--accent); }
   .pdi-point-label{
     font-family:'IBM Plex Mono', monospace; font-size:11.5px; letter-spacing:0.12em;
     text-transform:uppercase; color:var(--text); font-weight:600;
@@ -285,6 +300,7 @@ let state = { config: null, tasks: [], pdi: { points: [] } };
 let calView = null;
 let selectedDate = todayStr();
 let activeTab = 'cronograma';
+let pdiCollapsed = new Set(); // ids dos pontos recolhidos (só visual)
 
 const MONTHS_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const DOW_PT = ['D','S','T','Q','Q','S','S'];
@@ -435,20 +451,45 @@ function pdiBlockPublicHtml(b, blk){
     </div>`;
 }
 
-function renderPdi(app){
-  const points = normalizePdi(state.pdi).points;
+// Um ponto sem título, sem itens e sem nenhum texto não vira cartão vazio aqui.
+function isPdiPointEmpty(pt){
+  if((pt.title || '').trim()) return false;
+  return PDI_BLOCKS.every(b => {
+    const blk = (pt.blocks || {})[b.key] || {};
+    const items = Array.isArray(blk.items) ? blk.items : [];
+    if(items.some(it => (it.text || '').trim() || it.date)) return false;
+    return PDI_TEXT_FIELDS.every(f => !(blk[f.key] || '').trim());
+  });
+}
 
-  const pointsHtml = points.length === 0
+function renderPdi(app){
+  const points = state.pdi.points;
+  // Mantém a numeração original mesmo escondendo os pontos em branco.
+  const visible = points
+    .map((pt, i) => ({ pt, n: i + 1 }))
+    .filter(({ pt }) => !isPdiPointEmpty(pt));
+
+  const pointsHtml = visible.length === 0
     ? `<div class="card"><div class="empty">O PDI ainda não foi preenchido.</div></div>`
-    : points.map((pt, i) => `
-        <div class="pdi-point">
+    : visible.map(({ pt, n }) => {
+        const collapsed = pdiCollapsed.has(pt.id);
+        return `
+        <div class="pdi-point${collapsed ? ' collapsed' : ''}">
           <div class="pdi-point-head">
-            <span class="pdi-point-label">Ponto a desenvolver ${i + 1}</span>
+            <button type="button" class="pdi-icon-btn chev" data-toggle-point="${pt.id}"
+                    aria-expanded="${collapsed ? 'false' : 'true'}"
+                    aria-label="${collapsed ? 'Expandir' : 'Recolher'} ponto ${n}">${collapsed ? '▸' : '▾'}</button>
+            <div class="pdi-point-title-line" data-toggle-point="${pt.id}">
+              <span class="pdi-point-label">Ponto a desenvolver ${n}</span>
+              ${collapsed ? `<span class="pdi-point-preview">${escapeHtml(pt.title.trim() || '—')}</span>` : ''}
+            </div>
           </div>
-          <div class="pdi-title-ro">${pt.title.trim() ? escapeHtml(pt.title) : '—'}</div>
-          ${PDI_BLOCKS.map(b => pdiBlockPublicHtml(b, pt.blocks[b.key])).join('')}
-        </div>
-      `).join('');
+          ${collapsed ? '' : `
+            <div class="pdi-title-ro">${pt.title.trim() ? escapeHtml(pt.title) : '—'}</div>
+            ${PDI_BLOCKS.map(b => pdiBlockPublicHtml(b, pt.blocks[b.key])).join('')}
+          `}
+        </div>`;
+      }).join('');
 
   app.innerHTML = `
     ${tabsHtml()}
@@ -462,6 +503,14 @@ function renderPdi(app){
   `;
 
   bindTabs(app);
+
+  app.querySelectorAll('[data-toggle-point]').forEach(el => {
+    el.onclick = () => {
+      const id = el.getAttribute('data-toggle-point');
+      if(pdiCollapsed.has(id)) pdiCollapsed.delete(id); else pdiCollapsed.add(id);
+      render();
+    };
+  });
 }
 
 function render(){
@@ -618,7 +667,7 @@ async function load(){
     .eq('id', 1)
     .single();
   if(!error && data){
-    state = { config: data.config, tasks: data.tasks || [], pdi: data.pdi || { points: [] } };
+    state = { config: data.config, tasks: data.tasks || [], pdi: normalizePdi(data.pdi) };
   }
   render();
 }
@@ -629,7 +678,7 @@ sb.channel('cronograma_state_public')
       state = {
         config: payload.new.config,
         tasks: payload.new.tasks || [],
-        pdi: payload.new.pdi || { points: [] }
+        pdi: normalizePdi(payload.new.pdi)
       };
       render();
     }

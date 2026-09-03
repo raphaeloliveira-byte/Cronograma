@@ -291,7 +291,22 @@
     background:var(--surface); border:1px solid var(--border);
     border-radius:14px; padding:20px; margin-bottom:18px;
   }
-  .pdi-point-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .pdi-point-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .pdi-point.collapsed .pdi-point-head{ margin-bottom:0; }
+  .pdi-point-title-line{
+    display:flex; align-items:baseline; gap:10px;
+    flex:1; min-width:0; cursor:pointer;
+  }
+  .pdi-point-preview{
+    font-family:'IBM Plex Sans', sans-serif; font-size:13px; font-weight:400;
+    color:var(--text-soft); text-transform:none; letter-spacing:0;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;
+  }
+  .pdi-icon-btn.chev{
+    font-size:12px; color:var(--text-soft); width:22px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .pdi-icon-btn.chev:hover{ color:var(--accent); }
   .pdi-point-label{
     font-family:'IBM Plex Mono', monospace; font-size:11.5px; letter-spacing:0.12em;
     text-transform:uppercase; color:var(--text); font-weight:600;
@@ -384,6 +399,9 @@ let editingTaskId = null;
 let activeTab = 'cronograma';
 let pdiDraft = null;
 let pdiDirty = false;
+let pdiCollapsed = new Set(); // ids dos pontos recolhidos (só visual, não vai pro banco)
+
+const PDI_DEFAULT_POINTS = 4;
 
 const MONTHS_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const DOW_PT = ['D','S','T','Q','Q','S','S'];
@@ -982,21 +1000,39 @@ function pdiBlockAdminHtml(pIdx, b, blk){
 }
 
 function renderPdi(app){
-  if(!pdiDraft) pdiDraft = normalizePdi(state.pdi);
+  if(!pdiDraft){
+    pdiDraft = normalizePdi(state.pdi);
+    // Primeira vez com o PDI vazio: já entrega os 4 formulários prontos.
+    if(pdiDraft.points.length === 0){
+      for(let i = 0; i < PDI_DEFAULT_POINTS; i++) pdiDraft.points.push(emptyPdiPoint());
+    }
+  }
   const points = pdiDraft.points;
+  const allCollapsed = points.length > 0 && points.every(pt => pdiCollapsed.has(pt.id));
 
   const pointsHtml = points.length === 0
     ? `<div class="card"><div class="empty">Nenhum ponto a desenvolver ainda.</div></div>`
-    : points.map((pt, pIdx) => `
-        <div class="pdi-point">
+    : points.map((pt, pIdx) => {
+        const collapsed = pdiCollapsed.has(pt.id);
+        const preview = pt.title.trim();
+        return `
+        <div class="pdi-point${collapsed ? ' collapsed' : ''}">
           <div class="pdi-point-head">
-            <span class="pdi-point-label">Ponto a desenvolver ${pIdx + 1}</span>
-            <button type="button" class="pdi-icon-btn" data-del-point="${pIdx}" aria-label="Remover ponto">×</button>
+            <button type="button" class="pdi-icon-btn chev" data-toggle-point="${pt.id}"
+                    aria-expanded="${collapsed ? 'false' : 'true'}"
+                    aria-label="${collapsed ? 'Expandir' : 'Recolher'} ponto ${pIdx + 1}">${collapsed ? '▸' : '▾'}</button>
+            <div class="pdi-point-title-line" data-toggle-point="${pt.id}">
+              <span class="pdi-point-label">Ponto a desenvolver ${pIdx + 1}</span>
+              ${collapsed ? `<span class="pdi-point-preview">${preview ? escapeHtml(preview) : 'em branco'}</span>` : ''}
+            </div>
+            <button type="button" class="pdi-icon-btn" data-del-point="${pIdx}" aria-label="Remover ponto ${pIdx + 1}">×</button>
           </div>
-          <textarea data-pdi="title" data-p="${pIdx}" rows="3" placeholder="Ex: Ponte entre Backoffice e Consultoria">${escapeHtml(pt.title)}</textarea>
-          ${PDI_BLOCKS.map(b => pdiBlockAdminHtml(pIdx, b, pt.blocks[b.key])).join('')}
-        </div>
-      `).join('');
+          ${collapsed ? '' : `
+            <textarea data-pdi="title" data-p="${pIdx}" rows="3" placeholder="Ex: Ponte entre Backoffice e Consultoria">${escapeHtml(pt.title)}</textarea>
+            ${PDI_BLOCKS.map(b => pdiBlockAdminHtml(pIdx, b, pt.blocks[b.key])).join('')}
+          `}
+        </div>`;
+      }).join('');
 
   app.innerHTML = `
     <div class="badge-adm">Admin</div>
@@ -1006,8 +1042,9 @@ function renderPdi(app){
     <div class="countdown">Pontos a desenvolver no modelo <strong>70 · 20 · 10</strong>.</div>
 
     <div class="pdi-actions">
+      <button type="button" id="addPdiPoint">+ Adicionar ponto</button>
       <button type="button" id="savePdi">Salvar PDI</button>
-      <button type="button" class="ghost" id="addPdiPoint">+ Ponto a desenvolver</button>
+      ${points.length > 1 ? `<button type="button" class="ghost" id="toggleAllPdi">${allCollapsed ? 'Expandir todos' : 'Recolher todos'}</button>` : ''}
       <span class="pdi-save-state ${pdiDirty ? 'dirty' : ''}" id="pdiSaveState">${pdiDirty ? 'Alterações não salvas' : 'Tudo salvo'}</span>
     </div>
 
@@ -1021,10 +1058,21 @@ function renderPdi(app){
   bindPdiInputs(app);
 
   document.getElementById('addPdiPoint').onclick = () => {
-    pdiDraft.points.push(emptyPdiPoint());
+    const pt = emptyPdiPoint();
+    pdiDraft.points.push(pt);
+    pdiCollapsed.delete(pt.id);
     markPdiDirty();
     render();
   };
+
+  const toggleAll = document.getElementById('toggleAllPdi');
+  if(toggleAll){
+    toggleAll.onclick = () => {
+      if(allCollapsed) pdiCollapsed.clear();
+      else pdiDraft.points.forEach(pt => pdiCollapsed.add(pt.id));
+      render();
+    };
+  }
 
   document.getElementById('savePdi').onclick = async () => {
     document.getElementById('pdiError').textContent = '';
@@ -1083,8 +1131,18 @@ function bindPdiInputs(app){
     el.onclick = () => {
       const idx = Number(el.getAttribute('data-del-point'));
       if(!confirm(`Remover o ponto a desenvolver ${idx + 1}?`)) return;
-      pdiDraft.points.splice(idx, 1);
+      const removed = pdiDraft.points.splice(idx, 1)[0];
+      if(removed) pdiCollapsed.delete(removed.id);
       markPdiDirty();
+      render();
+    };
+  });
+
+  // Recolher/expandir: só muda a visualização, o rascunho continua intacto.
+  app.querySelectorAll('[data-toggle-point]').forEach(el => {
+    el.onclick = () => {
+      const id = el.getAttribute('data-toggle-point');
+      if(pdiCollapsed.has(id)) pdiCollapsed.delete(id); else pdiCollapsed.add(id);
       render();
     };
   });
